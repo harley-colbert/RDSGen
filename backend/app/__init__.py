@@ -16,6 +16,17 @@ def create_app() -> Flask:
     # API
     app.register_blueprint(api_bp)
 
+    # Prime the external workbook cache as soon as the server is ready to serve
+    # requests. Failures are logged but do not prevent the app from starting;
+    # the frontend will surface any fatal configuration issues during its
+    # bootstrap call.
+    from .routes.pricing import preload_cost_cache
+
+    try:  # pragma: no cover - startup hook
+        preload_cost_cache()
+    except Exception as exc:
+        app.logger.warning("Workbook cache preload skipped: %s", exc)
+
     # Index route
     @app.get("/")
     def index():

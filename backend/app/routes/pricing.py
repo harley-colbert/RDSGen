@@ -22,10 +22,11 @@ log = logging.getLogger("RDSGen.routes.pricing")
 # ---------------- Cache of workbook costs (base + per-option) ----------------
 _cache_lock = Lock()
 _price_cache: Dict[str, object] = {
-    "key": None,     # workbook path (str)
-    "ts": 0.0,       # when loaded (epoch seconds)
-    "base": None,    # float base cost
-    "items": None,   # dict[str,float] option costs
+    "key": None,      # workbook path (str)
+    "ts": 0.0,        # when loaded (epoch seconds)
+    "base": None,     # float base cost
+    "items": None,    # dict[str,float] option costs
+    "method": None,   # loader strategy (openpyxl/com)
 }
 
 
@@ -52,6 +53,44 @@ def _excel_mode_enabled(excel_compat_mode) -> bool:
     return False
 
 
+def preload_cost_cache(*, refresh: bool = False) -> Dict[str, object]:
+    """Prime the external workbook cache when configuration allows it.
+
+    Returns a payload describing what happened. When Excel compatibility is
+    disabled the cache remains untouched but the function completes
+    successfully so callers can continue bootstrapping the app.
+    """
+
+    settings = settings_mgr.load(refresh=refresh)
+    path = (getattr(settings, "EXTERNAL_WORKBOOK_PATH", "") or "").strip()
+    excel_enabled = _excel_mode_enabled(getattr(settings, "EXCEL_COMPAT_MODE", False))
+
+    payload: Dict[str, object] = {
+        "excel_enabled": excel_enabled,
+        "workbook": path,
+        "cache_loaded": False,
+        "cache_method": None,
+    }
+
+    if not excel_enabled:
+        return payload
+
+    if not path:
+        raise RuntimeError("EXCEL_COMPAT_MODE is ON but EXTERNAL_WORKBOOK_PATH is empty.")
+
+    if not _is_url(path) and not Path(path).exists():
+        raise FileNotFoundError(f"Workbook not found: {path}")
+
+    _ensure_cost_cache(path)
+
+    with _cache_lock:
+        payload["cache_loaded"] = True
+        payload["cache_ts"] = _price_cache["ts"]
+        payload["cache_method"] = _price_cache.get("method")
+
+    return payload
+
+
 def _ensure_cost_cache(path: str) -> None:
     """
     Load costing grid (read-only baseline) if cache is empty or workbook changed.
@@ -64,22 +103,85 @@ def _ensure_cost_cache(path: str) -> None:
         if _price_cache["key"] == path and _price_cache["base"] is not None:
             return
 
+    base: float | None = None
+    items: Dict[str, float] | None = None
+    method: str | None = None
+
+    if not _is_url(path):
+        try:
+            base, items = _read_costs_via_openpyxl(path)
+            method = "openpyxl"
+        except Exception as exc:  # pragma: no cover - defensive logging
+            current_app.logger.warning(
+                "Fast workbook load failed (openpyxl); falling back to COM: %s", exc
+            )
+
+    if base is None or items is None:
         eng = ExcelPricingEngine(path, visible=False)
         # IMPORTANT: call with positional margin only (no invalid kwargs).
         pl = eng.get_price_list_for_margin(0.0)
+        base = float(getattr(pl, "base_price", 0.0) or 0.0)
+        items = {str(k): float(v) for k, v in (getattr(pl, "items", {}) or {}).items()}
+        method = "com"
 
+    with _cache_lock:
         _price_cache["key"] = path
         _price_cache["ts"] = time()
-        _price_cache["base"] = getattr(pl, "base_price", None)
-        _price_cache["items"] = getattr(pl, "items", None)
+        _price_cache["base"] = base
+        _price_cache["items"] = items
+        _price_cache["method"] = method
 
         if _price_cache["base"] is None or _price_cache["items"] is None:
             raise RuntimeError("ExcelPricingEngine returned an unexpected structure (missing base_price/items).")
 
         current_app.logger.info(
-            "cost_cache refreshed path=%s base=%.2f items=%d",
-            path, float(_price_cache["base"]), len(_price_cache["items"] or {})
+            "cost_cache refreshed path=%s base=%.2f items=%d method=%s",
+            path,
+            float(_price_cache["base"]),
+            len(_price_cache["items"] or {}),
+            _price_cache["method"],
         )
+
+
+def _read_costs_via_openpyxl(path: str) -> Tuple[float, Dict[str, float]]:
+    """Fast path: read Summary sheet via openpyxl without spinning up Excel."""
+
+    from openpyxl import load_workbook  # lazy import to avoid startup cost
+
+    wb = load_workbook(filename=path, data_only=True, read_only=True)
+    try:
+        if ExcelPricingEngine.SUMMARY not in wb.sheetnames:
+            raise RuntimeError(
+                f"Summary worksheet ({ExcelPricingEngine.SUMMARY}) not found in workbook"
+            )
+
+        ws = wb[ExcelPricingEngine.SUMMARY]
+
+        def _num(cell_addr: str) -> float:
+            raw = ws[cell_addr].value
+            try:
+                return float(raw or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        base_total = 0.0
+        for row in ExcelPricingEngine.BASE_COMPONENT_ROWS:
+            base_total += _num(f"J{row}")
+
+        items: Dict[str, float] = {}
+        for row, label in ExcelPricingEngine.PRICE_ROW_LABELS.items():
+            items[label] = _num(f"J{row}")
+
+        # Mirror ExcelPricingEngine rounding behaviour for consistency
+        base_total = round(base_total, 2)
+        items = {k: round(v, 2) for k, v in items.items()}
+
+        return base_total, items
+    finally:
+        try:
+            wb.close()
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
 
 
 def _get_cached_costs(path: str) -> Tuple[float, Dict[str, float]]:

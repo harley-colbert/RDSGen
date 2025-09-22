@@ -10,5 +10,6 @@ from . import pricing      # noqa: F401
 from . import generate     # noqa: F401
 from . import outputs      # noqa: F401
 from . import browse       # noqa: F401
+from . import bootstrap    # noqa: F401
 
 __all__ = ["api_bp"]
