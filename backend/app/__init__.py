@@ -22,12 +22,11 @@ def create_app() -> Flask:
     # bootstrap call.
     from .routes.pricing import preload_cost_cache
 
-    @app.before_serving
-    def _warm_cache_on_startup() -> None:  # pragma: no cover - startup hook
-        try:
-            preload_cost_cache()
-        except Exception as exc:
-            app.logger.warning("Workbook cache preload skipped: %s", exc)
+    try:  # pragma: no cover - startup hook
+        preload_cost_cache()
+    except Exception as exc:
+        app.logger.warning("Workbook cache preload skipped: %s", exc)
+
 
     # Index route
     @app.get("/")
