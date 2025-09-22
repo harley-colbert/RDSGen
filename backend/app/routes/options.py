@@ -7,8 +7,10 @@ from typing import Any, Dict, List, TypedDict
 
 from flask import Blueprint, jsonify, request
 
+from .blueprint import api_bp
+
 log = logging.getLogger("RDSGen.routes.options")
-bp = Blueprint("options", __name__, url_prefix="/api/options")
+bp = Blueprint("options", __name__, url_prefix="/options")
 
 
 class OptionsPayload(TypedDict):
@@ -112,3 +114,7 @@ def get_labeled_options():
 
     log.debug("Labeled options response for categories=%s", cats)
     return jsonify(result)
+
+
+# Register nested blueprint under the API namespace
+api_bp.register_blueprint(bp)
