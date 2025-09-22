@@ -27,6 +27,7 @@ def create_app() -> Flask:
     except Exception as exc:
         app.logger.warning("Workbook cache preload skipped: %s", exc)
 
+
     # Index route
     @app.get("/")
     def index():
