@@ -21,7 +21,7 @@ class Settings(BaseModel):
     WORD_TEMPLATE_PATH: Optional[str] = ""
     COSTING_TEMPLATE_PATH: Optional[str] = ""
     EXTERNAL_WORKBOOK_PATH: Optional[str] = ""
-    EXCEL_COMPAT_MODE: Literal["auto", "com", "openpyxl"] = "auto"
+    EXCEL_COMPAT_MODE: Literal["auto", "com", "openpyxl", "off"] = "auto"
 
     @model_validator(mode="after")
     def _trim_strings(self) -> "Settings":
