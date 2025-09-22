@@ -9,14 +9,14 @@ def _price_list() -> dict[str, float]:
         "Spare Parts Package": 100.0,
         "Spare Saw Blades": 5.0,
         "Spare Foam Pads": 2.5,
-        "Taller Guarding": 300.0,
-        "Taller Guarding and Netting": 450.0,
-        "Front USL": 50.0,
-        "Side USL": 60.0,
-        "Side Badger": 70.0,
-        "Canada Transformer": 80.0,
-        "Step Up Transformer": 90.0,
-        "Spanish Training": 25.0,
+        "Guarding – Taller": 300.0,
+        "Guarding – Netting": 450.0,
+        "Infeed – Front USL": 50.0,
+        "Infeed – Side USL": 60.0,
+        "Infeed – Side Badger": 70.0,
+        "Transformer – Canada": 80.0,
+        "Transformer – Step Up": 90.0,
+        "Training (English & Spanish)": 25.0,
     }
 
 
@@ -42,8 +42,8 @@ def test_compute_from_price_list_accumulates_all_options():
     assert comp.options_qty["Spare Parts Package"] == 1
     assert comp.options_breakdown["Spare Saw Blades"] == 100.0
     assert comp.options_breakdown["Spare Foam Pads"] == 25.0
-    assert comp.options_breakdown["Side Badger"] == 70.0
-    assert comp.options_breakdown["Canada Transformer"] == 80.0
+    assert comp.options_breakdown["Infeed – Side Badger"] == 70.0
+    assert comp.options_breakdown["Transformer – Canada"] == 80.0
     assert comp.total_price == 1000.0 + comp.options_price_total
 
 
