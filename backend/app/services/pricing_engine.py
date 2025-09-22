@@ -7,8 +7,19 @@ import os
 import time
 import logging
 
-import pythoncom            # COM apartment
-import pywintypes           # for pywintypes.com_error
+try:  # pragma: no cover - Windows-only dependency
+    import pythoncom            # COM apartment
+except ModuleNotFoundError:  # pragma: no cover - used on non-Windows CI
+    pythoncom = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - Windows-only dependency
+    import pywintypes           # for pywintypes.com_error
+except ModuleNotFoundError:  # pragma: no cover - used on non-Windows CI
+    class _PyWinTypesStub:  # pragma: no cover - simple stub for tests
+        class com_error(Exception):
+            pass
+
+    pywintypes = _PyWinTypesStub()  # type: ignore[assignment]
 
 
 @dataclass
@@ -63,6 +74,9 @@ class ExcelPricingEngine:
 
     def _open_excel(self):
         """Create a fresh Excel COM instance, timing + logging included."""
+        if pythoncom is None:
+            raise RuntimeError("pythoncom/pywin32 is required for Excel integration on this platform.")
+
         pythoncom.CoInitialize()
         t0 = time.perf_counter()
         try:
@@ -133,11 +147,12 @@ class ExcelPricingEngine:
         except Exception:
             if logger:
                 logger.debug("excel_quit ignored_error", exc_info=True)
-        try:
-            pythoncom.CoUninitialize()
-        except Exception:
-            if logger:
-                logger.debug("coinitialize_uninit ignored_error", exc_info=True)
+        if pythoncom is not None:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                if logger:
+                    logger.debug("coinitialize_uninit ignored_error", exc_info=True)
         if logger:
             dt = (time.perf_counter() - t0) * 1000
             logger.debug("excel_close done ms=%.1f save=%s", dt, save_changes)
