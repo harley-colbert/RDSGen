@@ -18,8 +18,20 @@ def test_validate_schema_error(client):
 
 
 def test_validate_rules_error(client):
-    payload = PricingInputs(spare_blades_qty=15).model_dump()
+    payload = PricingInputs.model_construct(
+        margin=0.24,
+        margin_pct=24.0,
+        base_price=414320.82,
+        spare_parts_qty=1,
+        spare_blades_qty=15,
+        spare_pads_qty=30,
+        guarding="Standard",
+        feeding="No",
+        transformer="None",
+        training="English",
+    ).model_dump()
     resp = client.post("/api/validate", json=payload)
     assert resp.status_code == 400
     payload = resp.get_json()
-    assert "spare_blades_qty" in payload["errors"]
+    schema_msg = payload["errors"].get("schema", "")
+    assert "spare_blades_qty" in schema_msg

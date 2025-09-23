@@ -23,6 +23,19 @@ class Settings(BaseModel):
     EXTERNAL_WORKBOOK_PATH: Optional[str] = ""
     EXCEL_COMPAT_MODE: Literal["auto", "com", "openpyxl", "off"] = "auto"
 
+    @field_validator("EXCEL_COMPAT_MODE", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: Optional[str]) -> str:
+        if value is None:
+            return "auto"
+        if isinstance(value, str):
+            cleaned = value.strip().lower()
+            if not cleaned:
+                return "auto"
+            if cleaned in {"auto", "com", "openpyxl", "off"}:
+                return cleaned
+        return value  # type: ignore[return-value]
+
     @model_validator(mode="after")
     def _trim_strings(self) -> "Settings":
         def _t(s: Optional[str]) -> Optional[str]:
@@ -32,7 +45,7 @@ class Settings(BaseModel):
         self.WORD_TEMPLATE_PATH = _t(self.WORD_TEMPLATE_PATH)
         self.COSTING_TEMPLATE_PATH = _t(self.COSTING_TEMPLATE_PATH)
         self.EXTERNAL_WORKBOOK_PATH = _t(self.EXTERNAL_WORKBOOK_PATH)
-        self.EXCEL_COMPAT_MODE = (self.EXCEL_COMPAT_MODE or "auto").strip()  # type: ignore
+        self.EXCEL_COMPAT_MODE = self.EXCEL_COMPAT_MODE or "auto"
         return self
 
 
@@ -56,6 +69,15 @@ class PricingInputs(BaseModel):
     spare_blades_qty: int = Field(20, ge=0)
     spare_pads_qty: int = Field(30, ge=0)
 
+    @field_validator("spare_blades_qty", "spare_pads_qty")
+    @classmethod
+    def _val_spare_step(cls, v: int) -> int:
+        if v == 0:
+            return v
+        if v % 10 != 0:
+            raise ValueError("Spare quantities must be 0 or a multiple of 10.")
+        return v
+
     # Enumerated option selections (MUST align with rules/options)
     guarding: Literal["Standard", "Tall", "Tall w/ Netting"] = "Standard"
     feeding: Literal["No", "Front USL", "Side USL", "Side Badger"] = "No"
@@ -63,35 +85,29 @@ class PricingInputs(BaseModel):
     training: Literal["English", "English & Spanish"] = "English"
 
     # --- Validators ---
-    @field_validator("spare_blades_qty", "spare_pads_qty")
-    @classmethod
-    def _val_spare_step(cls, v: int) -> int:
-        # Enforce multiples of 10 (or 0)
-        if v == 0:
-            return v
-        if v % 10 != 0:
-            raise ValueError("Spare quantities must be 0 or a multiple of 10.")
-        return v
-
     @model_validator(mode="after")
     def _sync_margin_fields(self) -> "PricingInputs":
         """
         Keep margin (0..1) and margin_pct (0..95) synchronized.
-        - If either looks user-specified (different from the default pairing), prefer that source.
-        - Otherwise, ensure internal consistency.
         """
-        # If margin_pct provided independently, use it as source of truth
-        # Detect "provided" loosely by checking mismatch vs computed
-        computed_pct = round(self.margin * 100.0, 6)
-        if round(self.margin_pct, 6) != computed_pct:
-            # Someone set margin_pct directly → derive margin
-            self.margin = round(self.margin_pct / 100.0, 6)
+        fields_set = getattr(self, "model_fields_set", set())
+        margin_set = "margin" in fields_set
+        margin_pct_set = "margin_pct" in fields_set
 
-        # Clamp safety (should already be enforced by Field ranges)
-        self.margin = min(max(self.margin, 0.0), 0.95)
-        self.margin_pct = min(max(self.margin_pct, 0.0), 95.0)
-        # Re-sync to ensure exact consistency
-        self.margin_pct = round(self.margin * 100.0, 6)
+        if margin_set and not margin_pct_set:
+            self.margin_pct = round(self.margin * 100.0, 6)
+        elif margin_pct_set and not margin_set:
+            self.margin = round(self.margin_pct / 100.0, 6)
+        elif margin_set and margin_pct_set:
+            # When both provided, favour explicit margin_pct for round-tripping.
+            self.margin = round(self.margin_pct / 100.0, 6)
+        else:
+            # Defaults; ensure consistency
+            self.margin_pct = round(self.margin * 100.0, 6)
+
+        # Clamp to the declared ranges and keep rounding stable
+        self.margin = round(min(max(self.margin, 0.0), 1.0), 6)
+        self.margin_pct = round(min(max(self.margin_pct, 0.0), 95.0), 6)
         return self
 
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from flask import request, jsonify
 from .blueprint import api_bp
@@ -19,7 +19,7 @@ def generate():
 
     s = settings_mgr.load()
     out_root = Path(s.OUTPUT_DIR)
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     out_dir = out_root / ts
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -42,8 +42,8 @@ def generate():
     resp = GenerateResponse(
         ok=True,
         outputs={
-            "quote_docx": f"/outputs/{ts}/quote.docx",
-            "costing_xlsx": f"/outputs/{ts}/costing.xlsx",
+            "quote_docx": f"outputs/{ts}/quote.docx",
+            "costing_xlsx": f"outputs/{ts}/costing.xlsx",
         },
     )
     return jsonify(resp.model_dump())

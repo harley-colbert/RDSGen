@@ -167,7 +167,7 @@ class StubRecorder:
 
 @pytest.fixture()
 def fake_settings(tmp_path: Path) -> Settings:
-    outputs = tmp_path / "outputs"
+    outputs = tmp_path / "default_outputs"
     outputs.mkdir()
     costing_tpl = tmp_path / "costing_template.xlsx"
     costing_tpl.write_text("template", encoding="utf-8")

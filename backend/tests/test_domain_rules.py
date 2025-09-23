@@ -21,7 +21,18 @@ def _price_list() -> dict[str, float]:
 
 
 def test_validate_flags_bad_spares():
-    inp = PricingInputs(spare_blades_qty=15, spare_pads_qty=20)
+    inp = PricingInputs.model_construct(
+        margin=0.24,
+        margin_pct=24.0,
+        base_price=414320.82,
+        spare_parts_qty=1,
+        spare_blades_qty=15,
+        spare_pads_qty=20,
+        guarding="Standard",
+        feeding="No",
+        transformer="None",
+        training="English",
+    )
     errors = rules.validate(inp)
     assert "spare_blades_qty" in errors
     assert "spare_pads_qty" not in errors

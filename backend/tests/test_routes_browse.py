@@ -42,14 +42,14 @@ def _patch_executor(monkeypatch, request):
 
 
 @pytest.mark.parametrize("_patch_executor", [("C:/tmp/file.txt", False)], indirect=True)
-def test_browse_success(client):
+def test_browse_success(client, _patch_executor):
     resp = client.get("/api/browse?mode=open_file")
     assert resp.status_code == 200
     assert resp.get_json()["path"] == "C:/tmp/file.txt"
 
 
 @pytest.mark.parametrize("_patch_executor", [("", True)], indirect=True)
-def test_browse_error(client):
+def test_browse_error(client, _patch_executor):
     resp = client.get("/api/browse")
     assert resp.status_code == 500
     assert resp.get_json()["ok"] is False
