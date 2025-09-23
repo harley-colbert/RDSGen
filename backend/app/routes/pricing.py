@@ -108,12 +108,23 @@ def _ensure_cost_cache(path: str) -> None:
     method: str | None = None
 
     if not _is_url(path):
+        suffix = Path(path).suffix.lower()
+        fast_loader = None
+        fast_method = None
+
+        if suffix == ".xlsb":
+            fast_loader = _read_costs_via_pyxlsb
+            fast_method = "pyxlsb"
+        else:
+            fast_loader = _read_costs_via_openpyxl
+            fast_method = "openpyxl"
+
         try:
-            base, items = _read_costs_via_openpyxl(path)
-            method = "openpyxl"
+            base, items = fast_loader(path)
+            method = fast_method
         except Exception as exc:  # pragma: no cover - defensive logging
             current_app.logger.warning(
-                "Fast workbook load failed (openpyxl); falling back to COM: %s", exc
+                "Fast workbook load failed (%s); falling back to COM: %s", fast_method, exc
             )
 
     if base is None or items is None:
@@ -182,6 +193,54 @@ def _read_costs_via_openpyxl(path: str) -> Tuple[float, Dict[str, float]]:
             wb.close()
         except Exception:  # pragma: no cover - best effort cleanup
             pass
+
+
+def _read_costs_via_pyxlsb(path: str) -> Tuple[float, Dict[str, float]]:
+    """Fast path for binary workbooks (.xlsb) using pyxlsb."""
+
+    from pyxlsb import open_workbook  # lazy import; heavy dependency
+
+    def _a1_to_row_col(address: str) -> Tuple[int, int]:
+        import re
+
+        m = re.fullmatch(r"\s*([A-Za-z]+)(\d+)\s*", address)
+        if not m:
+            raise ValueError(f"Invalid cell address: {address}")
+        col_letters, row_str = m.groups()
+        col = 0
+        for ch in col_letters.upper():
+            col = col * 26 + (ord(ch) - ord("A") + 1)
+        return int(row_str), col
+
+    with open_workbook(path) as wb:
+        try:
+            ws = wb.get_sheet(ExcelPricingEngine.SUMMARY)
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Summary worksheet ({ExcelPricingEngine.SUMMARY}) not found in workbook"
+            ) from exc
+
+        def _num(cell_addr: str) -> float:
+            row, col = _a1_to_row_col(cell_addr)
+            cell = ws.get_cell(row, col)
+            value = getattr(cell, "v", None)
+            try:
+                return float(value or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        base_total = 0.0
+        for row in ExcelPricingEngine.BASE_COMPONENT_ROWS:
+            base_total += _num(f"J{row}")
+
+        items: Dict[str, float] = {}
+        for row, label in ExcelPricingEngine.PRICE_ROW_LABELS.items():
+            items[label] = _num(f"J{row}")
+
+        base_total = round(base_total, 2)
+        items = {k: round(v, 2) for k, v in items.items()}
+
+        return base_total, items
 
 
 def _get_cached_costs(path: str) -> Tuple[float, Dict[str, float]]:
