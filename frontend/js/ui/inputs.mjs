@@ -1,5 +1,5 @@
 import { apiGet, apiPost } from '../api.mjs';
-import { getState, setInputs } from '../state.mjs';
+import { getState, setInputs, setCostGrid } from '../state.mjs';
 
 const fmtMoney = (n) =>
   (typeof n === 'number' && isFinite(n))
@@ -11,6 +11,61 @@ const fmtMs = (ms) =>
 
 const fmtSec = (ms) =>
   (typeof ms === 'number' && isFinite(ms)) ? `${(ms / 1000).toFixed(2)}s` : '—';
+
+const fmtGridCell = (value) => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' && isFinite(value)) {
+    return value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  }
+  if (typeof value === 'string') return value;
+  return String(value ?? '');
+};
+
+const renderGridRow = (row = []) => {
+  return row.map(cell => {
+    const numeric = typeof cell === 'number' && isFinite(cell);
+    return `<td style="padding:.25rem .5rem;border-bottom:1px solid rgba(0,0,0,0.05);border-right:1px solid rgba(0,0,0,0.05);text-align:${numeric ? 'right' : 'left'};white-space:nowrap;">${fmtGridCell(cell)}</td>`;
+  }).join('');
+};
+
+function costGridHTML(grid, { loading = false, error = null } = {}) {
+  if (error) {
+    return `
+      <div class="card" style="margin-top:1rem">
+        <h3 style="margin-bottom:.5rem">Cost Grid (C4–K55)</h3>
+        <div class="muted">${error}</div>
+      </div>`;
+  }
+  if (loading) {
+    return `
+      <div class="card" style="margin-top:1rem">
+        <div class="muted">Loading cost grid…</div>
+      </div>`;
+  }
+  if (!Array.isArray(grid) || !grid.length) {
+    return `
+      <div class="card" style="margin-top:1rem">
+        <h3 style="margin-bottom:.5rem">Cost Grid (C4–K55)</h3>
+        <div class="muted">No cost grid data available.</div>
+      </div>`;
+  }
+
+  const rows = grid.map(row => `<tr>${renderGridRow(row)}</tr>`).join('');
+
+  return `
+    <div class="card" style="margin-top:1rem">
+      <h3 style="margin-bottom:.5rem">Cost Grid (C4–K55)</h3>
+      <div class="muted" style="margin-bottom:.5rem">Read-only snapshot of Summary!C4:K55</div>
+      <div style="max-height:18rem;overflow:auto;border:1px solid rgba(0,0,0,0.05);border-radius:.25rem;">
+        <table style="width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;">
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
 
 async function getOpts(name) {
   const res = await apiGet(`/api/options/${name}`);
@@ -132,6 +187,7 @@ let ticker = null;
 
 async function refreshPrice(root) {
   const target = root.querySelector('#live-pricing');
+  const gridTarget = root.querySelector('#cost-grid');
   if (!target) return;
 
   // live stopwatch while calculating
@@ -147,6 +203,10 @@ async function refreshPrice(root) {
     const el = labelEl();
     if (el) el.textContent = `Calculating… ${seconds.toFixed(2)}s`;
   }, 100);
+
+  if (gridTarget) {
+    gridTarget.innerHTML = costGridHTML([], { loading: true });
+  }
 
   clearTimeout(priceTimer);
   priceTimer = setTimeout(async () => {
@@ -168,11 +228,19 @@ async function refreshPrice(root) {
           catch { console.debug('pricing meta', resp.pricing.meta); }
         }
         target.innerHTML = pricingTableHTML(resp.pricing, elapsed);
+        const grid = resp.pricing.grid || [];
+        setCostGrid(grid);
+        if (gridTarget) {
+          gridTarget.innerHTML = costGridHTML(grid);
+        }
       } else {
         target.innerHTML = `
           <div class="card" style="margin-top:1rem"><div class="muted">
             No pricing available. Check Excel compat settings and workbook path in Settings.
           </div></div>`;
+        if (gridTarget) {
+          gridTarget.innerHTML = costGridHTML([], { error: 'No cost grid data available.' });
+        }
       }
     } catch (e) {
       clearInterval(ticker);
@@ -180,6 +248,9 @@ async function refreshPrice(root) {
         <div class="card" style="margin-top:1rem"><div class="muted">
           Pricing error: ${e?.message || e}. See Network → /api/price.
         </div></div>`;
+      if (gridTarget) {
+        gridTarget.innerHTML = costGridHTML([], { error: 'Failed to load cost grid.' });
+      }
     }
   }, 250); // debounce rapid changes
 }
@@ -244,6 +315,7 @@ export async function renderInputs(root) {
     </div>
 
     <div id="live-pricing"></div>
+    <div id="cost-grid"></div>
   `;
 
   // No-op placeholder; keep your own validation/save if you have it
@@ -277,6 +349,12 @@ export async function renderInputs(root) {
     el.addEventListener('input', onChange);
     el.addEventListener('change', onChange);
   });
+
+  const gridTarget = root.querySelector('#cost-grid');
+  if (gridTarget) {
+    const existing = Array.isArray(s.costGrid) ? s.costGrid : [];
+    gridTarget.innerHTML = costGridHTML(existing);
+  }
 
   // Initial pricing
   refreshPrice(root);

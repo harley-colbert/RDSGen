@@ -26,6 +26,7 @@ _price_cache: Dict[str, object] = {
     "ts": 0.0,        # when loaded (epoch seconds)
     "base": None,     # float base cost
     "items": None,    # dict[str,float] option costs
+    "grid": None,     # list[list[Any]] cost grid (C4:K55)
     "method": None,   # loader strategy (openpyxl/com)
 }
 
@@ -105,11 +106,12 @@ def _ensure_cost_cache(path: str) -> None:
 
     base: float | None = None
     items: Dict[str, float] | None = None
+    grid: list[list[object]] | None = None
     method: str | None = None
 
     if not _is_url(path):
         try:
-            base, items = _read_costs_via_openpyxl(path)
+            base, items, grid = _read_costs_via_openpyxl(path)
             method = "openpyxl"
         except Exception as exc:  # pragma: no cover - defensive logging
             current_app.logger.warning(
@@ -122,6 +124,7 @@ def _ensure_cost_cache(path: str) -> None:
         pl = eng.get_price_list_for_margin(0.0)
         base = float(getattr(pl, "base_price", 0.0) or 0.0)
         items = {str(k): float(v) for k, v in (getattr(pl, "items", {}) or {}).items()}
+        grid = getattr(pl, "grid", None)
         method = "com"
 
     with _cache_lock:
@@ -129,6 +132,7 @@ def _ensure_cost_cache(path: str) -> None:
         _price_cache["ts"] = time()
         _price_cache["base"] = base
         _price_cache["items"] = items
+        _price_cache["grid"] = grid
         _price_cache["method"] = method
 
         if _price_cache["base"] is None or _price_cache["items"] is None:
@@ -143,7 +147,7 @@ def _ensure_cost_cache(path: str) -> None:
         )
 
 
-def _read_costs_via_openpyxl(path: str) -> Tuple[float, Dict[str, float]]:
+def _read_costs_via_openpyxl(path: str) -> Tuple[float, Dict[str, float], list[list[object]]]:
     """Fast path: read Summary sheet via openpyxl without spinning up Excel."""
 
     from openpyxl import load_workbook  # lazy import to avoid startup cost
@@ -172,11 +176,22 @@ def _read_costs_via_openpyxl(path: str) -> Tuple[float, Dict[str, float]]:
         for row, label in ExcelPricingEngine.PRICE_ROW_LABELS.items():
             items[label] = _num(f"J{row}")
 
+        grid_rows = list(
+            ws.iter_rows(
+                min_row=ExcelPricingEngine.GRID_MIN_ROW,
+                max_row=ExcelPricingEngine.GRID_MAX_ROW,
+                min_col=ExcelPricingEngine.GRID_MIN_COL,
+                max_col=ExcelPricingEngine.GRID_MAX_COL,
+                values_only=True,
+            )
+        )
+        grid = ExcelPricingEngine.normalize_grid(grid_rows)
+
         # Mirror ExcelPricingEngine rounding behaviour for consistency
         base_total = round(base_total, 2)
         items = {k: round(v, 2) for k, v in items.items()}
 
-        return base_total, items
+        return base_total, items, grid
     finally:
         try:
             wb.close()
@@ -184,12 +199,19 @@ def _read_costs_via_openpyxl(path: str) -> Tuple[float, Dict[str, float]]:
             pass
 
 
-def _get_cached_costs(path: str) -> Tuple[float, Dict[str, float]]:
+def _get_cached_costs(path: str) -> Tuple[float, Dict[str, float], list[list[object]]]:
     _ensure_cost_cache(path)
     with _cache_lock:
         base = float(_price_cache["base"])  # type: ignore[arg-type]
         items = dict(_price_cache["items"] or {})  # type: ignore[assignment]
-        return base, items
+        grid_raw = _price_cache.get("grid")
+        if isinstance(grid_raw, list):
+            grid = [list(row) if isinstance(row, list) else list(row or []) for row in grid_raw]
+        elif grid_raw is None:
+            grid = []
+        else:
+            grid = [list(row) for row in grid_raw]  # type: ignore[arg-type]
+        return base, items, grid
 
 
 # --------- Compatibility helper expected by generate.py (re-added) -----------
@@ -264,7 +286,7 @@ def price_live():
 
     # Compute using cached baseline + rules
     try:
-        base_cost, item_costs = _get_cached_costs(path)
+        base_cost, item_costs, cost_grid = _get_cached_costs(path)
         comp = rules.compute_from_price_list(inp, base_cost, item_costs)
         payload = comp.model_dump() if hasattr(comp, "model_dump") else comp  # support pydantic/BaseModel or dict
 
@@ -273,6 +295,7 @@ def price_live():
             "cache_ts": _price_cache["ts"],
             "workbook": path,
         }
+        payload["grid"] = cost_grid
         return jsonify({"ok": True, "pricing": payload})
     except Exception as e:
         current_app.logger.exception("Live pricing (cache) failed for %s", path)
@@ -301,6 +324,7 @@ def price_refresh():
             "ok": True,
             "base_cost": _price_cache["base"],
             "items": _price_cache["items"],
+            "grid": _price_cache.get("grid"),
             "cache_ts": _price_cache["ts"],
             "workbook": path,
         })

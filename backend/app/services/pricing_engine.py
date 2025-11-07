@@ -26,11 +26,17 @@ except ModuleNotFoundError:  # pragma: no cover - used on non-Windows CI
 class ExcelPriceList:
     base_price: float
     items: Dict[str, float]
+    grid: list[list[object]] | None = None
 
 
 class ExcelPricingEngine:
     SUMMARY = "Summary"
     MARGIN_CELL = "M4"
+    GRID_RANGE = "C4:K55"
+    GRID_MIN_ROW = 4
+    GRID_MAX_ROW = 55
+    GRID_MIN_COL = 3
+    GRID_MAX_COL = 11
 
     # Row -> label (matches VBA mapping)
     PRICE_ROW_LABELS: Dict[int, str] = {
@@ -52,6 +58,29 @@ class ExcelPricingEngine:
 
     # Rows summed for the base cost
     BASE_COMPONENT_ROWS = list(range(4, 11)) + [14, 17, 24, 31]
+
+    @staticmethod
+    def _normalize_cell(value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return round(float(value), 2)
+        try:
+            return round(float(value), 2)
+        except (TypeError, ValueError):
+            return str(value)
+
+    @classmethod
+    def normalize_grid(cls, rows: Any) -> list[list[object]]:
+        grid: list[list[object]] = []
+        if rows is None:
+            return grid
+        for row in rows:
+            if row is None:
+                grid.append([])
+                continue
+            grid.append([cls._normalize_cell(cell) for cell in row])
+        return grid
 
     def __init__(self, workbook_path: str, visible: bool = False, logger: logging.Logger | None = None):
         # Keep SharePoint URLs as-is; normalize local paths for COM
@@ -217,8 +246,14 @@ class ExcelPricingEngine:
                 v = ws.Range(f"J{r}").Value
                 items[name] = float(v or 0.0)
 
-            return ExcelPriceList(base_price=round(base_total, 2),
-                                  items={k: round(v, 2) for k, v in items.items()})
+            grid_values = ws.Range(self.GRID_RANGE).Value
+            grid = self.normalize_grid(grid_values)
+
+            return ExcelPriceList(
+                base_price=round(base_total, 2),
+                items={k: round(v, 2) for k, v in items.items()},
+                grid=grid,
+            )
         finally:
             self._close(xl, wb, save_changes=False, logger=self.log)
             self.log.debug("read_snapshot_ro done")
@@ -254,6 +289,9 @@ class ExcelPricingEngine:
             for r, name in self.PRICE_ROW_LABELS.items():
                 items[name] = float(ws.Range(f"J{r}").Value or 0.0)
 
+            grid_values = ws.Range(self.GRID_RANGE).Value
+            grid = self.normalize_grid(grid_values)
+
             t_end = time.perf_counter()
             self.log.debug(
                 "price_list done opened_ro=%s t_write_ms=%.1f t_calc_ms=%.1f t_read_ms=%.1f t_total_ms=%.1f",
@@ -267,6 +305,7 @@ class ExcelPricingEngine:
             return ExcelPriceList(
                 base_price=round(base_total, 2),
                 items={k: round(v, 2) for k, v in items.items()},
+                grid=grid,
             )
         finally:
             self._close(xl, wb, save_changes=False, logger=self.log)

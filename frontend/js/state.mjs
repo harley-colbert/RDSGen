@@ -11,10 +11,18 @@ const state = {
     transformer: 'None',
     training: 'English'
   },
-  outputs: null
+  outputs: null,
+  costGrid: []
 };
 
 export function getState(){ return state; }
 export function setSettings(s){ state.settings = s; }
 export function setInputs(i){ state.inputs = {...state.inputs, ...i}; }
 export function setOutputs(o){ state.outputs = o; }
+export function setCostGrid(grid){
+  if (!Array.isArray(grid)) {
+    state.costGrid = [];
+    return;
+  }
+  state.costGrid = grid.map(row => Array.isArray(row) ? [...row] : []);
+}
